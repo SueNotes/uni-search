@@ -184,15 +184,23 @@
     <div class="search-container">
         <select id="region-select" class="input-group">
             <option value="">지역 선택 (전체)</option>
-            <option value="100260">서울</option>
-            <option value="100267">부산</option>
-            <option value="100269">인천</option>
-            <option value="100272">대구</option>
-            <option value="100275">광주</option>
-            <option value="100271">대전</option>
-            <option value="100273">울산</option>
-            <option value="100268">경기</option>
-            <option value="100276">강원</option>
+            <option value="서울">서울</option>
+            <option value="부산">부산</option>
+            <option value="인천">인천</option>
+            <option value="대구">대구</option>
+            <option value="광주">광주</option>
+            <option value="대전">대전</option>
+            <option value="울산">울산</option>
+            <option value="세종">세종</option>
+            <option value="경기">경기</option>
+            <option value="강원">강원</option>
+            <option value="충북">충북</option>
+            <option value="충남">충남</option>
+            <option value="전북">전북</option>
+            <option value="전남">전남</option>
+            <option value="경북">경북</option>
+            <option value="경남">경남</option>
+            <option value="제주">제주</option>
         </select>
 
         <input type="text" id="keyword-input" class="input-group" placeholder="대학명 또는 학과명 입력 (예: 컴퓨터)">
@@ -208,7 +216,6 @@
     <script>
         // 전역 변수로 데이터를 담아둡니다.
         let ALL_DATA = [];
-        let isLoading = false;
 
         // 페이지 로드 시 자동으로 데이터를 가져옵니다.
         window.addEventListener('DOMContentLoaded', async () => {
@@ -218,63 +225,79 @@
         async function loadData() {
             const resultArea = document.getElementById('result-area');
             try {
-                // 같은 폴더에 있는 json 파일을 읽어옵니다.
                 const response = await fetch('university_data.json');
-                if (!response.ok) {
-                    throw new Error("데이터 파일을 찾을 수 없습니다.");
-                }
+                if (!response.ok) throw new Error("데이터 파일을 찾을 수 없습니다.");
+
                 ALL_DATA = await response.json();
                 console.log(`데이터 로드 완료: ${ALL_DATA.length}건`);
 
-                // 로딩 메시지 제거
                 document.querySelector('.loading').textContent = "데이터 준비 완료! 검색 조건을 입력하세요.";
 
             } catch (error) {
                 console.error(error);
-                resultArea.innerHTML = `<div class="loading" style="color:red;">
-                    ⚠ 데이터 로드 실패<br>
-                    (브라우저 보안 정책상 로컬 파일 직접 실행 시 차단될 수 있습니다.<br>
-                    VS Code의 'Live Server'를 쓰거나 Github에 올려서 확인하세요.)
-                </div>`;
+                resultArea.innerHTML = `<div class="loading" style="color:red;">⚠ 데이터 로드 실패</div>`;
             }
         }
 
         async function searchUniv() {
-            const regionCode = document.getElementById('region-select').options[document.getElementById('region-select').selectedIndex].text;
-            const regionVal = document.getElementById('region-select').value;
+            // value(코드) 대신 텍스트(지역명)를 가져옵니다.
+            const regionSelect = document.getElementById('region-select');
+            const regionText = regionSelect.options[regionSelect.selectedIndex].text;
+            const regionVal = regionSelect.value; // "서울" 등 (HTML value 수정 필요)
+
             const keyword = document.getElementById('keyword-input').value.trim();
             const resultArea = document.getElementById('result-area');
 
-            // 검색어가 너무 짧으면 경고 (성능 이슈 방지)
             if (regionVal === "" && keyword.length < 2) {
                 alert("지역을 선택하거나 검색어를 2글자 이상 입력해주세요.");
                 return;
             }
 
-            resultArea.innerHTML = '<div class="loading">🔍 검색 중...</div>';
+            resultArea.innerHTML = '<div class="loading">🔍 검색 및 학교별 정리 중...</div>';
 
-            // 비동기로 처리하여 화면 멈춤 방지
             setTimeout(() => {
-                const filtered = ALL_DATA.filter(item => {
-                    // 1. 지역 필터 (선택 안함 or 이름 일치)
-                    // 데이터의 'region'은 '서울', '경기' 등의 문자열임
-                    const regionMatch = (regionVal === "") || (item.region === regionCode);
+                // 1. 1차 필터링 (검색 조건에 맞는 행만 추출)
+                const filteredRows = ALL_DATA.filter(item => {
+                    // 지역 체크: 데이터(서울특별시) vs 선택(서울) -> 포함 관계 확인
+                    // "지역 선택(전체)"일 경우 regionVal이 "" 이므로 통과
+                    const regionMatch = (regionVal === "") || (item.region.includes(regionText));
 
-                    // 2. 키워드 필터 (학교명, 학과명, 관련직업)
-                    // 데이터 키: schoolName, major, job
                     const keywordMatch = (keyword === "") ||
                         (item.schoolName.includes(keyword)) ||
                         (item.major.includes(keyword)) ||
-                        (item.job && item.job.includes(keyword)); // job이 없을 수도 있으므로 체크
+                        (item.job && item.job.includes(keyword));
 
                     return regionMatch && keywordMatch;
                 });
 
-                // 결과가 너무 많으면 상위 100개만 자르기 (브라우저 렉 방지)
-                const limitData = filtered.slice(0, 100);
+                // 2. 학교 기준으로 데이터 묶기 (Grouping)
+                // 학교명 -> { 지역, 학교유형, 링크, 학과목록[], 직업목록[] }
+                const schoolMap = new Map();
 
-                displayResults(limitData, filtered.length);
-            }, 100);
+                filteredRows.forEach(row => {
+                    if (!schoolMap.has(row.schoolName)) {
+                        schoolMap.set(row.schoolName, {
+                            schoolName: row.schoolName,
+                            region: row.region,
+                            type: row.type,
+                            link: row.link,
+                            majors: new Set(), // 중복 제거를 위해 Set 사용
+                            jobs: new Set()
+                        });
+                    }
+                    const school = schoolMap.get(row.schoolName);
+                    if (row.major) school.majors.add(row.major);
+                    if (row.job) school.jobs.add(row.job);
+                });
+
+                // Map을 배열로 변환
+                const groupedData = Array.from(schoolMap.values());
+
+                // 결과가 너무 많으면 상위 50개 학교만 보여주기
+                const limitData = groupedData.slice(0, 50);
+
+                displayResults(limitData, groupedData.length);
+            }, 50);
         }
 
         function displayResults(data, totalCount) {
@@ -286,15 +309,14 @@
                 return;
             }
 
-            // 결과 건수 표시
             const infoMsg = document.createElement('div');
             infoMsg.style.textAlign = 'center';
             infoMsg.style.color = '#666';
             infoMsg.style.marginBottom = '1rem';
-            if (totalCount > 100) {
-                infoMsg.innerHTML = `총 <b>${totalCount}</b>건이 검색되었습니다. (상위 100건만 표시)`;
+            if (totalCount > 50) {
+                infoMsg.innerHTML = `총 <b>${totalCount}</b>개 대학이 검색되었습니다. (상위 50개만 표시)`;
             } else {
-                infoMsg.innerHTML = `총 <b>${totalCount}</b>건이 검색되었습니다.`;
+                infoMsg.innerHTML = `총 <b>${totalCount}</b>개 대학이 검색되었습니다.`;
             }
             resultArea.appendChild(infoMsg);
 
@@ -302,10 +324,15 @@
                 const card = document.createElement('div');
                 card.className = 'school-card';
 
-                // 관련 직업 데이터가 있으면 표시
-                const jobInfo = item.job ? `<br><span style="font-size:0.85rem; color:#666;">💼 관련직업: ${item.job}</span>` : '';
+                // 학과 목록 정리 (최대 10개만 보여주고 ... 처리)
+                const majorList = Array.from(item.majors);
+                const displayMajors = majorList.slice(0, 10).join(", ");
+                const moreMajors = majorList.length > 10 ? ` 외 ${majorList.length - 10}개` : "";
 
-                // 링크 처리 (http가 없으면 붙여주기)
+                // 관련 직업 정리 (검색어가 있을 때만 보여줄 수도 있지만, 여기선 일단 3개만)
+                const jobList = Array.from(item.jobs).filter(j => j).slice(0, 5).join(", "); // 빈 값 제외
+                const jobInfo = jobList ? `<div style="margin-top:4px; font-size:0.9rem; color:#555;">💼 관련 진로: ${jobList}...</div>` : '';
+
                 let linkUrl = item.link;
                 if (linkUrl && !linkUrl.startsWith('http')) {
                     linkUrl = 'http://' + linkUrl;
@@ -314,12 +341,13 @@
                 card.innerHTML = `
                     <div class="school-name">${item.schoolName} <span style="font-size:0.8rem; font-weight:400; color:#666;">(${item.type})</span></div>
                     <div class="school-info">
-                        <span class="tag">${item.region}</span>
-                        <span class="tag">학과: ${item.major}</span>
+                        <span class="tag" style="background:#eee; color:#333;">${item.region}</span>
+                        <div style="margin-top:8px; line-height:1.6;">
+                            <b>🎓 개설 학과:</b> ${displayMajors}${moreMajors}
+                        </div>
                         ${jobInfo}
-                        <br>
-                        <div style="margin-top:5px;">
-                            🌐 홈페이지: <a href="${linkUrl}" target="_blank">${item.link}</a>
+                        <div style="margin-top:8px;">
+                            🌐 <a href="${linkUrl}" target="_blank" style="color:#4f46e5; text-decoration:none;">학교 홈페이지 방문하기</a>
                         </div>
                     </div>
                 `;
